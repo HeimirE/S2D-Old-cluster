@@ -1,16 +1,16 @@
 // =============================================================================
 // Grafana Alloy Configuration for Microsoft Storage Spaces Direct (S2D)
 // Ships Windows Event Logs to Loki at http://172.22.22.103:3100
-// Nodes: SC-SANHA31 / SC-SANHA32 / SC-SANHA33
+// Nodes: SM-SANHA1 / SM-SANHA2 / SM-SANHA3
 //
 // DEPLOY: Place this file at C:\Program Files\GrafanaLabs\Alloy\config.alloy
 // Install Alloy via MSI from https://github.com/grafana/alloy/releases
 // Service name: Alloy  (manages itself as a Windows Service automatically)
 //
 // IMPORTANT: Change the "node" constant below on each server before deploying:
-//   SC-SANHA31 -> node = "SC-SANHA31"
-//   SC-SANHA32 -> node = "SC-SANHA32"
-//   SC-SANHA33 -> node = "SC-SANHA33"
+//   SM-SANHA1 -> node = "SM-SANHA1"
+//   SM-SANHA2 -> node = "SM-SANHA2"
+//   SM-SANHA3 -> node = "SM-SANHA3"
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -41,7 +41,7 @@ loki.write "loki_endpoint" {
     cluster = "S2D-Cluster",
     site    = "SANHA",
     // Change this value on each node:
-    node    = "SC-SANHA31",
+    node    = "SM-SANHA1",
   }
 }
 
