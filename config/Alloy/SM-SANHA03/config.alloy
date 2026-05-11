@@ -1,0 +1,333 @@
+// =============================================================================
+// Grafana Alloy Configuration for Microsoft Storage Spaces Direct (S2D)
+// Ships Windows Event Logs to Loki at http://172.22.22.103:3100
+// Nodes: SC-SANHA31 / SC-SANHA32 / SC-SANHA33
+//
+// DEPLOY: Place this file at C:\Program Files\GrafanaLabs\Alloy\config.alloy
+// Install Alloy via MSI from https://github.com/grafana/alloy/releases
+// Service name: Alloy  (manages itself as a Windows Service automatically)
+//
+// IMPORTANT: Change the "node" constant below on each server before deploying:
+//   SC-SANHA31 -> node = "SC-SANHA31"
+//   SC-SANHA32 -> node = "SC-SANHA32"
+//   SC-SANHA33 -> node = "SC-SANHA33"
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// GLOBAL CONSTANTS — edit per node
+// -----------------------------------------------------------------------------
+local.file "node_label" {
+  // Alternative: use env var by setting ALLOY_NODE_NAME in Windows environment
+  // and referencing sys.env("ALLOY_NODE_NAME") below instead of the string.
+  filename = "C:\\Program Files\\GrafanaLabs\\Alloy\\node.txt"
+  is_secret = false
+}
+
+// -----------------------------------------------------------------------------
+// LOKI ENDPOINT
+// -----------------------------------------------------------------------------
+loki.write "loki_endpoint" {
+  endpoint {
+    url = "http://172.22.22.103:3100/loki/api/v1/push"
+    tenant_id = "s2d"
+
+    // Retry on failure
+    min_backoff_period = "500ms"
+    max_backoff_period  = "5m"
+    max_backoff_retries = 10
+  }
+
+  external_labels = {
+    cluster = "S2D-Cluster",
+    site    = "SANHA",
+    // Change this value on each node:
+    node    = "SC-SANHA31",
+  }
+}
+
+// =============================================================================
+// WINDOWS EVENT LOG SOURCES
+// Each loki.source.windowsevent block targets one Event Log channel.
+// All forward to loki.process.s2d_pipeline for enrichment, then to Loki.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// 1. SYSTEM EVENT LOG
+//    Hardware errors, driver failures, service crashes
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "system_events" {
+  eventlog_name    = "System"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "10s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\system.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "windows_system_events",
+    log_type = "system",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 2. APPLICATION EVENT LOG
+//    Application-level errors and warnings only (Level 1-3)
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "application_events" {
+  eventlog_name    = "Application"
+  xpath_query      = "*[System[(Level=1 or Level=2 or Level=3)]]"
+  use_incoming_timestamp = true
+  poll_interval    = "15s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\application.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "windows_application_events",
+    log_type = "application",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 3. FAILOVER CLUSTERING
+//    Node joins/leaves, quorum changes, resource failures, CSV events
+//    Key Event IDs: 1069 (resource failure), 1177 (quorum), 1205 (cluster svc),
+//                   1254 (CSV), 4614 (node), 5120 (CSV offline)
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "failover_clustering" {
+  eventlog_name    = "Microsoft-Windows-FailoverClustering/Operational"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "5s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\failover_clustering.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_failover_clustering",
+    log_type = "failover_clustering",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 4. STORAGE SPACES DRIVER
+//    Disk errors, pool health changes, resync events, write failures
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "storage_spaces_driver" {
+  eventlog_name    = "Microsoft-Windows-StorageSpaces-Driver/Operational"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "5s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\storage_spaces_driver.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_storage_spaces_driver",
+    log_type = "storage_spaces_driver",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 5. STORAGE SPACES SPACE MANAGER
+//    Pool capacity events, tier management, fault domain changes
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "space_manager" {
+  eventlog_name    = "Microsoft-Windows-StorageSpaces-SpaceManager/Operational"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "10s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\space_manager.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_space_manager",
+    log_type = "space_manager",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 6. STORAGE MANAGEMENT
+//    Management API events, PowerShell storage module events
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "storage_management" {
+  eventlog_name    = "Microsoft-Windows-StorageManagement/Operational"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "15s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\storage_management.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_storage_management",
+    log_type = "storage_management",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 7. DISK (Physical disk errors — critical for S2D drive health)
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "disk_events" {
+  eventlog_name    = "Microsoft-Windows-Disk/Operational"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "5s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\disk.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_disk_events",
+    log_type = "disk",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 8. SMB CLIENT (node-to-node traffic over InfiniBand/RDMA)
+//    Errors and warnings only
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "smb_client" {
+  eventlog_name    = "Microsoft-Windows-SMBClient/Operational"
+  xpath_query      = "*[System[(Level=1 or Level=2 or Level=3)]]"
+  use_incoming_timestamp = true
+  poll_interval    = "10s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\smb_client.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_smb_client",
+    log_type = "smb_client",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 9. SMB SERVER
+//    Errors and warnings only
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "smb_server" {
+  eventlog_name    = "Microsoft-Windows-SMBServer/Operational"
+  xpath_query      = "*[System[(Level=1 or Level=2 or Level=3)]]"
+  use_incoming_timestamp = true
+  poll_interval    = "10s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\smb_server.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_smb_server",
+    log_type = "smb_server",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 10. HEALTH SERVICE (S2D built-in health monitoring)
+//     Reports faults detected by the S2D Health Service
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "health_service" {
+  eventlog_name    = "Microsoft-Windows-Health/Operational"
+  xpath_query      = "*"
+  use_incoming_timestamp = true
+  poll_interval    = "5s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\health_service.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_health_service",
+    log_type = "health_service",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 11. NTFS (filesystem-level errors on S2D volumes)
+//     Errors and warnings only
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "ntfs_events" {
+  eventlog_name    = "Microsoft-Windows-Ntfs/Operational"
+  xpath_query      = "*[System[(Level=1 or Level=2 or Level=3)]]"
+  use_incoming_timestamp = true
+  poll_interval    = "15s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\ntfs.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "s2d_ntfs",
+    log_type = "ntfs",
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 12. SECURITY EVENT LOG
+//     Critical and error events only — remove if not needed
+// -----------------------------------------------------------------------------
+loki.source.windowsevent "security_events" {
+  eventlog_name    = "Security"
+  xpath_query      = "*[System[(Level=1 or Level=2)]]"
+  use_incoming_timestamp = true
+  poll_interval    = "30s"
+  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\security.xml"
+  forward_to       = [loki.process.s2d_pipeline.receiver]
+  labels = {
+    job      = "windows_security_events",
+    log_type = "security",
+  }
+}
+
+// =============================================================================
+// PROCESSING PIPELINE
+// Parses the JSON event payload Alloy produces and promotes key fields
+// (level, event_id, provider) as indexed Loki labels.
+// =============================================================================
+loki.process "s2d_pipeline" {
+  forward_to = [loki.write.loki_endpoint.receiver]
+
+  // Parse the structured JSON that Alloy emits for Windows Events
+  stage.json {
+    expressions = {
+      level    = "level",
+      event_id = "event_id",
+      provider = "source",
+      message  = "message",
+      channel  = "channel",
+    }
+  }
+
+  // Promote parsed fields to Loki stream labels
+  stage.labels {
+    values = {
+      level    = "level",
+      event_id = "event_id",
+      provider = "provider",
+      channel  = "channel",
+    }
+  }
+
+  // Normalise level values to human-readable strings
+  stage.replace {
+    expression = "(?P<level>^1$)"
+    replace    = "Critical"
+  }
+  stage.replace {
+    expression = "(?P<level>^2$)"
+    replace    = "Error"
+  }
+  stage.replace {
+    expression = "(?P<level>^3$)"
+    replace    = "Warning"
+  }
+  stage.replace {
+    expression = "(?P<level>^4$)"
+    replace    = "Information"
+  }
+  stage.replace {
+    expression = "(?P<level>^5$)"
+    replace    = "Verbose"
+  }
+
+  // Drop verbose/informational from high-frequency channels to reduce Loki volume.
+  // Comment out this block if you want ALL events stored.
+  stage.match {
+    selector = "{log_type=~\"smb_client|smb_server|ntfs|storage_management\"}"
+    action   = "drop"
+    drop_counter_reason = "info_verbose_filtered"
+
+    stage.drop {
+      expression  = ".*"
+      longer_than = "0b"
+      // Only keep if level label is Critical, Error, or Warning
+      // (already filtered at xpath_query level for these jobs)
+    }
+  }
+}
+
+// =============================================================================
+// ALLOY UI / METRICS (optional but useful for monitoring Alloy itself)
+// Access the Alloy UI at http://<node-ip>:12345
+// =============================================================================
+logging {
+  level  = "info"
+  format = "logfmt"
+}
