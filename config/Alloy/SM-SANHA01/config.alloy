@@ -155,21 +155,8 @@ loki.source.windowsevent "storage_management" {
   }
 }
 
-// -----------------------------------------------------------------------------
-// 7. DISK (Physical disk errors — critical for S2D drive health)
-// -----------------------------------------------------------------------------
-loki.source.windowsevent "disk_events" {
-  eventlog_name    = "Microsoft-Windows-Disk/Operational"
-  xpath_query      = "*"
-  use_incoming_timestamp = true
-  poll_interval    = "5s"
-  bookmark_path    = "C:\\ProgramData\\GrafanaLabs\\Alloy\\bookmarks\\disk.xml"
-  forward_to       = [loki.process.s2d_pipeline.receiver]
-  labels = {
-    job      = "s2d_disk_events",
-    log_type = "disk",
-  }
-}
+// NOTE: Microsoft-Windows-Disk/Operational is not supported on Windows Server 2016
+// disk_events source removed
 
 // -----------------------------------------------------------------------------
 // 8. SMB CLIENT (node-to-node traffic over InfiniBand/RDMA)
@@ -309,18 +296,8 @@ loki.process "s2d_pipeline" {
 
   // Drop verbose/informational from high-frequency channels to reduce Loki volume.
   // Comment out this block if you want ALL events stored.
-  stage.match {
-    selector = "{log_type=~\"smb_client|smb_server|ntfs|storage_management\"}"
-    action   = "drop"
-    drop_counter_reason = "info_verbose_filtered"
-
-    stage.drop {
-      expression  = ".*"
-      longer_than = "0b"
-      // Only keep if level label is Critical, Error, or Warning
-      // (already filtered at xpath_query level for these jobs)
-    }
-  }
+  // High-frequency channels already filtered at xpath_query level (Level=1,2,3 only)
+  // No additional drop needed here
 }
 
 // =============================================================================
